@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.5
+      - run: ./install-deps.sh
+      - name: Tests (unit, fuzz, invariant)
+        run: FOUNDRY_PROFILE=ci forge test -vv
+      - name: Coverage must be 100%
+        run: |
+          forge coverage --report summary --no-match-coverage '(test|script)/' | tee coverage.txt
+          grep -E '^\| Total' coverage.txt | grep -qE '100\.00% .*100\.00% .*100\.00% .*100\.00%'
+      - name: Lint
+        run: test "$(forge lint src 2>&1 | grep -cE '^(warning|error)')" = "0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Slither
+        run: pip install slither-analyzer==0.11.6 && slither . --fail-low
+      - name: Aderyn (only accepted low findings allowed)
+        run: |
+          curl -sSL -o aderyn.tar.xz https://github.com/Cyfrin/aderyn/releases/download/aderyn-v0.6.8/aderyn-x86_64-unknown-linux-gnu.tar.xz
+          curl -sSL -o aderyn.sha256 https://github.com/Cyfrin/aderyn/releases/download/aderyn-v0.6.8/aderyn-x86_64-unknown-linux-gnu.tar.xz.sha256
+          echo "$(cut -d' ' -f1 aderyn.sha256)  aderyn.tar.xz" | sha256sum -c
+          tar xf aderyn.tar.xz && ./aderyn-x86_64-unknown-linux-gnu/aderyn . --src src -o report.md
+          test "$(grep -cE '^## (H|M)-' report.md)" = "0"
